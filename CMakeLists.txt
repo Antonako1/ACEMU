@@ -1,21 +1,42 @@
-﻿# CMakeList.txt : CMake project for ACEMU, include source and define
-# project specific logic here.
-#
-cmake_minimum_required (VERSION 3.8)
+﻿cmake_minimum_required(VERSION 3.20)
 
-# Enable Hot Reload for MSVC compilers if supported.
-if (POLICY CMP0141)
-  cmake_policy(SET CMP0141 NEW)
-  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<IF:$<AND:$<C_COMPILER_ID:MSVC>,$<CXX_COMPILER_ID:MSVC>>,$<$<CONFIG:Debug,RelWithDebInfo>:EditAndContinue>,$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>>")
+project(ACEMU
+    VERSION 0.1.0
+    LANGUAGES C
+)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+find_package(SDL3 REQUIRED)
+find_package(SDL3_ttf REQUIRED)
+
+add_executable(ACEMU
+    src/main.c
+    src/app.c
+    src/cpu.c
+    src/memory.c
+    src/crt.c
+    src/ui.c
+)
+
+target_include_directories(ACEMU PRIVATE
+    include
+)
+
+target_link_libraries(ACEMU PRIVATE
+    SDL3::SDL3
+    SDL3_ttf::SDL3_ttf
+)
+
+if (MSVC)
+    string(REPLACE "/W3" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+    target_compile_options(ACEMU PRIVATE /W4)
+else()
+    target_compile_options(ACEMU PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
 endif()
-
-project ("ACEMU")
-
-# Add source to this project's executable.
-add_executable (ACEMU "ACEMU.cpp" "ACEMU.h")
-
-if (CMAKE_VERSION VERSION_GREATER 3.12)
-  set_property(TARGET ACEMU PROPERTY CXX_STANDARD 20)
-endif()
-
-# TODO: Add tests and install targets if needed.
