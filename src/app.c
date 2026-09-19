@@ -27,7 +27,7 @@ void APP_Run( APP *app )
 {
     while ( !app->ui.quit )
     {
-        static int inc = 0;
+        static int inc = 1;
 
         UI_HandleEvents(
             &app->ui,
@@ -48,7 +48,7 @@ void APP_Run( APP *app )
             0xFF
         );
 
-        inc += 2;
+        inc = SDL_rand(CRT_FRAMEBUFFER_SIZE + 128);
 
         if ( inc >= CRT_FRAMEBUFFER_SIZE )
             inc = 0;

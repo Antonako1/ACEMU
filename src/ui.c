@@ -736,8 +736,8 @@ bool UI_Init( UI *ui, void *app )
         sizeof( *ui )
     );
 
-    ui->width = 1280;
-    ui->height = 760;
+    ui->width = 1600;
+    ui->height = 960;
 
     ui->window =
         SDL_CreateWindow(
@@ -845,6 +845,14 @@ void UI_HandleEvents(
                     CPU_Step( cpu );
                     break;
 
+                case SDLK_F7:
+                    ui->crt.coverEnabled = !ui->crt.coverEnabled;
+                    break;
+
+                case SDLK_F8:
+                    ui->crt.coverPeek = !ui->crt.coverPeek;
+                    break;
+
                 default:
                     break;
             }
@@ -940,7 +948,7 @@ void UI_Render(
     /*
      * Keep enough room for the memory panel.
      */
-    const float memoryHeight = 235.0f;
+    const float memoryHeight = 300.0f;
 
     float mainHeight =
         (float)windowHeight -
@@ -970,6 +978,32 @@ void UI_Render(
         crtPanel,
         "DISPLAY"
     );
+
+    /*
+     * Controls hint: what F7 / F8 do.
+     */
+    {
+        char hint[64];
+
+        snprintf(
+            hint,
+            sizeof( hint ),
+            "F7 COVER [%s]   F8 PEEK [%s]",
+            ui->crt.coverEnabled ? "ON" : "OFF",
+            ui->crt.coverPeek ? "ON" : "OFF"
+        );
+
+        DrawText(
+            ui,
+            ui->fontSmall,
+            hint,
+            crtPanel.x + 12.0f,
+            crtPanel.y + 36.0f,
+            C_GREEN_DIM_R,
+            C_GREEN_DIM_G,
+            C_GREEN_DIM_B
+        );
+    }
 
     /*
      * Dynamically fit the circular CRT.

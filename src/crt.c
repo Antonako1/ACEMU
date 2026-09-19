@@ -1,8 +1,16 @@
 ﻿#include "crt.h"
+
 #include <string.h>
 #include <math.h>
 
 #define CRT_PI 3.14159265358979323846f
+
+
+/*
+ * --------------------------------------------------------------------------
+ * Helpers
+ * --------------------------------------------------------------------------
+ */
 
 static void CRT_SetColor(
     SDL_Renderer *renderer,
@@ -21,23 +29,54 @@ static void CRT_SetColor(
     );
 }
 
-static bool CRT_InCircle(
-    CRT *crt,
-    float x,
-    float y
+
+/*
+ * Draw a circular outline.
+ */
+static void CRT_DrawCircle(
+    SDL_Renderer *renderer,
+    float cx,
+    float cy,
+    float radius
 )
 {
-    float dx =
-        x - crt->x;
+    const int segments = 128;
 
-    float dy =
-        y - crt->y;
+    float previousX =
+        cx + cosf( 0.0f ) * radius;
 
-    return
-        (dx * dx + dy * dy) <=
-        (crt->radius * crt->radius);
+    float previousY =
+        cy + sinf( 0.0f ) * radius;
+
+    for ( int i = 1; i <= segments; i++ )
+    {
+        float angle =
+            ((float)i / (float)segments) *
+            CRT_PI * 2.0f;
+
+        float x =
+            cx + cosf( angle ) * radius;
+
+        float y =
+            cy + sinf( angle ) * radius;
+
+        SDL_RenderLine(
+            renderer,
+            previousX,
+            previousY,
+            x,
+            y
+        );
+
+        previousX = x;
+        previousY = y;
+    }
 }
 
+
+/*
+ * Soft glow around the raster beam.
+ */
 static void CRT_DrawGlow(
     SDL_Renderer *renderer,
     float cx,
@@ -48,24 +87,26 @@ static void CRT_DrawGlow(
     U8 b
 )
 {
-    /*
-     * Soft radial bloom from concentric translucent squares,
-     * brightest toward the centre.
-     */
-    for ( int i = 0; i < 4; i++ )
+    for ( int i = 4; i >= 1; i-- )
     {
         float t =
-            (float)(i + 1) / 4.0f;
+            (float)i / 4.0f;
 
         float size =
             radius * 2.0f * t;
+
+        U8 alpha =
+            (U8)(
+                8.0f +
+                22.0f * (1.0f - t)
+                );
 
         CRT_SetColor(
             renderer,
             r,
             g,
             b,
-            (U8)(90.0f * (1.0f - t) + 10.0f)
+            alpha
         );
 
         SDL_FRect rect =
@@ -84,564 +125,280 @@ static void CRT_DrawGlow(
 }
 
 
-void CRT_Init(
-    CRT *crt,
-    SDL_Renderer *renderer,
-    const U8 *memory
-)
-{
-    crt->renderer = renderer;
-    crt->memory = memory;
-
-    crt->x = 360.0f;
-    crt->y = 300.0f;
-    crt->radius = 220.0f;
-
-    crt->pixelsPerCycle =
-        (
-            (float)CRT_REFRESH_HZ *
-            (float)CRT_FRAMEBUFFER_SIZE
-            ) /
-        (float)CRT_CPU_HZ;
-
-    CRT_Reset( crt );
-}
-
-
-void CRT_Reset(
+/*
+ * Draw the opaque/translucent portions of the circular cover.
+ *
+ * The rectangle underneath is deliberately NOT clipped.
+ *
+ * When peek is disabled:
+ *
+ *     [ CIRCLE ]
+ *
+ * hides the four corners.
+ *
+ * When peek is enabled:
+ *
+ *     [ translucent CIRCLE ]
+ *
+ * allows the rectangular screen to be seen through the corners.
+ */
+static void CRT_DrawCoverMask(
     CRT *crt
 )
 {
-    crt->scanPosition = 0;
-    crt->pixelAccumulator = 0.0f;
-    crt->scanning = true;
-
-    memset(
-        crt->framebuffer,
-        0,
-        sizeof( crt->framebuffer )
-    );
-}
-
-
-void CRT_SetMemory(
-    CRT *crt,
-    const U8 *memory
-)
-{
-    crt->memory = memory;
-}
-
-
-void CRT_StepCycles(
-    CRT *crt,
-    U32 cycles
-)
-{
-    if ( !crt->scanning )
-        return;
-
-    crt->pixelAccumulator +=
-        (float)cycles *
-        crt->pixelsPerCycle;
-
-    U32 pixels =
-        (U32)crt->pixelAccumulator;
-
-    crt->pixelAccumulator -=
-        (float)pixels;
-
-    while ( pixels-- )
-    {
-        /*
-         * The electron beam reaches this pixel now.
-         *
-         * Sample video memory NOW.
-         */
-        crt->framebuffer[
-            crt->scanPosition
-        ] =
-            crt->memory[
-                crt->scanPosition
-            ];
-
-            crt->scanPosition++;
-
-            if (
-                crt->scanPosition >=
-                CRT_FRAMEBUFFER_SIZE
-                )
-            {
-                crt->scanPosition = 0;
-            }
-    }
-}
-
-void CRT_Render(
-    CRT *crt
-)
-{
-    if ( !crt->renderer )
-        return;
-
-    if ( !crt->memory )
-        return;
-
     SDL_Renderer *renderer =
         crt->renderer;
 
-    const float radius =
+    float radius =
+        crt->radius;
+
+    float cx =
+        crt->x;
+
+    float cy =
+        crt->y;
+
+    U8 alpha =
+        crt->coverPeek
+        ? 55
+        : 255;
+
+/*
+ * Cover colour.
+ *
+ * The area outside the circle is drawn here.
+ */
+    CRT_SetColor(
+        renderer,
+        7,
+        17,
+        11,
+        alpha
+    );
+
+    /*
+     * Draw the four rectangular corner regions.
+     *
+     * These are outside the circular glass.
+     */
+    for ( int y = -(int)radius;
+          y <= (int)radius;
+          y++ )
+    {
+        float fy =
+            (float)y;
+
+        float inside =
+            radius * radius -
+            fy * fy;
+
+        if ( inside < 0.0f )
+            continue;
+
+        float width =
+            sqrtf( inside );
+
+        float left =
+            cx - radius;
+
+        float right =
+            cx + radius;
+
+        float circleLeft =
+            cx - width;
+
+        float circleRight =
+            cx + width;
+
+        float yy =
+            cy + fy;
+
+        /*
+         * Left side.
+         */
+        if ( circleLeft >= left )
+        {
+            SDL_RenderLine(
+                renderer,
+                left,
+                yy,
+                circleLeft,
+                yy
+            );
+        }
+
+        /*
+         * Right side.
+         */
+        if ( circleRight <= right )
+        {
+            SDL_RenderLine(
+                renderer,
+                circleRight,
+                yy,
+                right,
+                yy
+            );
+        }
+    }
+}
+
+
+/*
+ * Draw the glass dome itself.
+ *
+ * This does not clip the screen.
+ * It only overlays subtle translucent layers.
+ */
+static void CRT_DrawCoverGlass(
+    CRT *crt
+)
+{
+    SDL_Renderer *renderer =
+        crt->renderer;
+
+    float cx =
+        crt->x;
+
+    float cy =
+        crt->y;
+
+    float radius =
         crt->radius;
 
     /*
-     * -------------------------------------------------
-     * CRT glow
-     * -------------------------------------------------
+     * A very subtle dark glass tint.
+     *
+     * Only draw this when peeking so that the user can
+     * actually see the rectangular screen through it.
      */
-
-    SDL_SetRenderDrawBlendMode(
-        renderer,
-        SDL_BLENDMODE_BLEND
-    );
-
-    for ( int i = 8; i > 0; i-- )
+    if ( crt->coverPeek )
     {
         CRT_SetColor(
             renderer,
-            0,
-            35,
-            8,
-            10
+            20,
+            45,
+            30,
+            20
         );
 
-        float glowRadius =
-            radius + i * 4.0f;
-
-        /*
-         * Simple circular glow.
-         */
-        for (
-            float y = -glowRadius;
-            y <= glowRadius;
-            y += 2.0f
-            )
+        for ( int i = 0; i < 6; i++ )
         {
-            float width =
-                sqrtf(
-                    glowRadius * glowRadius -
-                    y * y
-                );
+            float r =
+                radius -
+                (float)i * 2.0f;
 
-            SDL_RenderLine(
+            if ( r <= 0.0f )
+                break;
+
+            CRT_DrawCircle(
                 renderer,
-                crt->x - width,
-                crt->y + y,
-                crt->x + width,
-                crt->y + y
+                cx,
+                cy,
+                r
             );
         }
     }
 
     /*
-     * -------------------------------------------------
-     * CRT glass
-     * -------------------------------------------------
+     * Inner glass edge.
      */
+    CRT_SetColor(
+        renderer,
+        70,
+        115,
+        85,
+        45
+    );
 
+    CRT_DrawCircle(
+        renderer,
+        cx,
+        cy,
+        radius - 2.0f
+    );
+
+    /*
+     * Dark inner edge.
+     */
     CRT_SetColor(
         renderer,
         0,
         5,
-        1,
-        250
+        2,
+        100
     );
 
-    for (
-        float y = -radius;
-        y <= radius;
-        y += 1.0f
-        )
-    {
-        float width =
-            sqrtf(
-                radius * radius -
-                y * y
-            );
-
-        SDL_RenderLine(
-            renderer,
-            crt->x - width,
-            crt->y + y,
-            crt->x + width,
-            crt->y + y
-        );
-    }
-
-    /*
-     * -------------------------------------------------
-     * Draw framebuffer
-     * -------------------------------------------------
-     */
-
-    const float pixelSize =
-        (radius * 2.0f) / CRT_WIDTH;
-
-    const float left =
-        crt->x - radius;
-
-    const float top =
-        crt->y - radius;
-
-    for ( int y = 0; y < CRT_HEIGHT; y++ )
-    {
-        for ( int x = 0; x < CRT_WIDTH; x++ )
-        {
-            U32 address =
-                (U32)y * CRT_WIDTH +
-                (U32)x;
-
-            U8 value =
-                crt->framebuffer[address];
-
-            if ( value == 0 )
-                continue;
-
-            float px =
-                left +
-                x * pixelSize;
-
-            float py =
-                top +
-                y * pixelSize;
-
-            float pixelCenterX =
-                px + pixelSize * 0.5f;
-
-            float pixelCenterY =
-                py + pixelSize * 0.5f;
-
-            float half =
-                pixelSize * 0.5f;
-
-            if (
-                !CRT_InCircle(
-                    crt,
-                    pixelCenterX - half,
-                    pixelCenterY - half
-                ) &&
-                !CRT_InCircle(
-                    crt,
-                    pixelCenterX + half,
-                    pixelCenterY - half
-                ) &&
-                !CRT_InCircle(
-                    crt,
-                    pixelCenterX - half,
-                    pixelCenterY + half
-                ) &&
-                !CRT_InCircle(
-                    crt,
-                    pixelCenterX + half,
-                    pixelCenterY + half
-                )
-                )
-            {
-                continue;
-            }
-
-            U8 green =
-                (U8)(
-                    40 +
-                    ((U32)value * 215) / 255
-                    );
-
-            /*
-             * Phosphor bloom: a soft halo behind the lit
-             * pixel so allocated phosphors glow.
-             */
-            CRT_SetColor(
-                renderer,
-                20,
-                green,
-                35,
-                45
-            );
-
-            SDL_FRect glow =
-            {
-                px - pixelSize,
-                py - pixelSize,
-                pixelSize * 3.0f,
-                pixelSize * 3.0f
-            };
-
-            SDL_RenderFillRect(
-                renderer,
-                &glow
-            );
-
-            CRT_SetColor(
-                renderer,
-                20,
-                green,
-                35,
-                255
-            );
-
-            SDL_FRect pixel =
-            {
-                px,
-                py,
-                pixelSize,
-                pixelSize
-            };
-
-            SDL_RenderFillRect(
-                renderer,
-                &pixel
-            );
-        }
-    }
-
-
-/*
- * -------------------------------------------------
- * Warped scanlines
- * -------------------------------------------------
- */
-
-    CRT_SetColor(
+    CRT_DrawCircle(
         renderer,
-        0,
-        50,
-        10,
-        35
+        cx,
+        cy,
+        radius - 5.0f
     );
-
-    for ( int row = 0; row < CRT_HEIGHT; row++ )
-    {
-        /*
-         * Scanlines are spaced according to the actual
-         * framebuffer, not the SDL coordinates.
-         */
-        float normalizedY =
-            ((float)row + 0.5f) /
-            (float)CRT_HEIGHT;
-
-        /*
-         * Convert framebuffer Y to -1 .. +1.
-         */
-        float v =
-            normalizedY * 2.0f - 1.0f;
-
-        /*
-         * CRT barrel/pincushion warp.
-         *
-         * Positive values push the edges outward.
-         */
-        float warp =
-            1.0f + 0.10f * v * v;
-
-        float warpedY =
-            v * radius * warp;
-
-        float y =
-            crt->y + warpedY;
-
-        /*
-         * Determine the visible width of this warped
-         * scanline on the CRT surface.
-         */
-        float normalizedWarpedY =
-            warpedY / radius;
-
-        if ( fabsf( normalizedWarpedY ) > 1.0f )
-            continue;
-
-        float width =
-            sqrtf(
-                radius * radius -
-                warpedY * warpedY
-            );
-
-        SDL_RenderLine(
-            renderer,
-            crt->x - width,
-            y,
-            crt->x + width,
-            y
-        );
-    }
-
 
 
     /*
-     * -------------------------------------------------
-     * Raster beam
-     * -------------------------------------------------
+     * ----------------------------------------------------------------------
+     * Specular reflection
+     * ----------------------------------------------------------------------
+     *
+     * A curved highlight on the upper-left portion of the glass.
      */
-    U32 scanPosition =
-        crt->scanPosition;
-
-    int scanX =
-        (int)(scanPosition % CRT_WIDTH);
-
-    int scanY =
-        (int)(scanPosition / CRT_WIDTH);
-
-    float beamX =
-        left +
-        ((float)scanX + 0.5f) * pixelSize;
-
-    float beamY =
-        top +
-        ((float)scanY + 0.5f) * pixelSize;
-
-    if ( CRT_InCircle(
-        crt,
-        beamX,
-        beamY ) )
-    {
-        /*
-         * Glowing trail following the beam: the last
-         * CRT_BEAM_TRAIL_LENGTH scan positions, fading with
-         * distance from the beam head.
-         */
-        for ( U32 i = 1; i <= CRT_BEAM_TRAIL_LENGTH; i++ )
-        {
-            U32 trailPos =
-                (scanPosition + CRT_FRAMEBUFFER_SIZE - i) %
-                CRT_FRAMEBUFFER_SIZE;
-
-            int trailX =
-                (int)(trailPos % CRT_WIDTH);
-
-            int trailY =
-                (int)(trailPos / CRT_WIDTH);
-
-            float trailBeamX =
-                left +
-                ((float)trailX + 0.5f) * pixelSize;
-
-            float trailBeamY =
-                top +
-                ((float)trailY + 0.5f) * pixelSize;
-
-            if ( !CRT_InCircle( crt, trailBeamX, trailBeamY ) )
-                continue;
-
-            float fade =
-                1.0f -
-                (float)i /
-                (float)(CRT_BEAM_TRAIL_LENGTH + 1);
-
-            CRT_SetColor(
-                renderer,
-                70,
-                210,
-                120,
-                (U8)(70.0f * fade)
-            );
-
-            float trailSize =
-                pixelSize * 2.0f;
-
-            SDL_FRect trail =
-            {
-                trailBeamX - trailSize * 0.5f,
-                trailBeamY - trailSize * 0.5f,
-                trailSize,
-                trailSize
-            };
-
-            SDL_RenderFillRect(
-                renderer,
-                &trail
-            );
-        }
-
-        /*
-         * Soft phosphor glow behind the beam so it is
-         * clearly visible as it sweeps the glass.
-         */
-        CRT_DrawGlow(
-            renderer,
-            beamX,
-            beamY,
-            pixelSize * 2.0f,
-            70,
-            210,
-            120
-        );
-
-        /*
-         * Bright green electron beam.
-         */
-        CRT_SetColor(
-            renderer,
-            220,
-            255,
-            220,
-            255
-        );
-
-        float beamSize =
-            pixelSize * 2.0f;
-
-        SDL_FRect beam =
-        {
-            beamX - beamSize * 0.5f,
-            beamY - beamSize * 0.5f,
-            beamSize,
-            beamSize
-        };
-
-        SDL_RenderFillRect(
-            renderer,
-            &beam
-        );
-    }
-    /*
-     * -------------------------------------------------
-     * CRT border
-     * -------------------------------------------------
-     */
-
-    CRT_SetColor(
-        renderer,
-        25,
-        130,
-        55,
-        220
-    );
-
     for ( int i = 0; i < 3; i++ )
     {
-        float r =
-            radius - (float)i + 4;
+        float reflectionRadius =
+            radius -
+            8.0f -
+            (float)i * 3.0f;
+
+        float startAngle =
+            205.0f * CRT_PI / 180.0f;
+
+        float endAngle =
+            315.0f * CRT_PI / 180.0f;
 
         float previousX =
-            crt->x + r;
+            cx +
+            cosf( startAngle ) *
+            reflectionRadius;
 
         float previousY =
-            crt->y;
+            cy +
+            sinf( startAngle ) *
+            reflectionRadius;
 
-        for (
-            int angle = 1;
-            angle <= 360;
-            angle++
-            )
+        for ( int j = 1; j <= 40; j++ )
         {
-            float radians =
-                angle * CRT_PI / 180.0f;
+            float t =
+                (float)j / 40.0f;
+
+            float angle =
+                startAngle +
+                (endAngle - startAngle) * t;
 
             float x =
-                crt->x +
-                cosf( radians ) * r;
+                cx +
+                cosf( angle ) *
+                reflectionRadius;
 
             float y =
-                crt->y +
-                sinf( radians ) * r;
+                cy +
+                sinf( angle ) *
+                reflectionRadius;
+
+            U8 alpha =
+                (U8)(
+                    22.0f -
+                    (float)i * 6.0f
+                    );
+
+            CRT_SetColor(
+                renderer,
+                180,
+                230,
+                195,
+                alpha
+            );
 
             SDL_RenderLine(
                 renderer,
@@ -655,6 +412,786 @@ void CRT_Render(
             previousY = y;
         }
     }
+
+
+    /*
+     * Small bright reflection.
+     */
+    CRT_SetColor(
+        renderer,
+        190,
+        240,
+        205,
+        18
+    );
+
+    SDL_FRect highlight =
+    {
+        cx - radius * 0.55f,
+        cy - radius * 0.65f,
+        radius * 0.45f,
+        radius * 0.08f
+    };
+
+    SDL_RenderFillRect(
+        renderer,
+        &highlight
+    );
+}
+
+
+/*
+ * --------------------------------------------------------------------------
+ * Initialisation
+ * --------------------------------------------------------------------------
+ */
+
+void CRT_Init(
+    CRT *crt,
+    SDL_Renderer *renderer,
+    const U8 *memory
+)
+{
+    memset(
+        crt,
+        0,
+        sizeof( *crt )
+    );
+
+    crt->renderer =
+        renderer;
+
+    crt->memory =
+        memory;
+
+    crt->x =
+        360.0f;
+
+    crt->y =
+        300.0f;
+
+    crt->radius =
+        220.0f;
+
+
+    /*
+     * One complete 128x128 frame should be scanned
+     * CRT_REFRESH_HZ times per second.
+     */
+    crt->pixelsPerCycle =
+        (
+            (float)CRT_REFRESH_HZ *
+            (float)CRT_FRAMEBUFFER_SIZE
+            ) /
+        (float)CRT_CPU_HZ;
+
+
+    crt->coverEnabled =
+        true;
+
+    crt->coverPeek =
+        false;
+
+
+    /*
+     * Start with an empty phosphor.
+     */
+    CRT_Reset(
+        crt
+    );
+}
+
+
+/*
+ * --------------------------------------------------------------------------
+ * Reset
+ * --------------------------------------------------------------------------
+ */
+
+void CRT_Reset(
+    CRT *crt
+)
+{
+    crt->scanPosition =
+        0;
+
+    crt->pixelAccumulator =
+        0.0f;
+
+    crt->scanning =
+        true;
+
+    memset(
+        crt->framebuffer,
+        0,
+        sizeof( crt->framebuffer )
+    );
+}
+
+
+/*
+ * --------------------------------------------------------------------------
+ * Memory
+ * --------------------------------------------------------------------------
+ */
+
+void CRT_SetMemory(
+    CRT *crt,
+    const U8 *memory
+)
+{
+    crt->memory =
+        memory;
+}
+
+
+/*
+ * --------------------------------------------------------------------------
+ * Cover controls
+ * --------------------------------------------------------------------------
+ */
+
+void CRT_SetCover(
+    CRT *crt,
+    bool enabled
+)
+{
+    crt->coverEnabled =
+        enabled;
+}
+
+
+void CRT_SetCoverPeek(
+    CRT *crt,
+    bool peek
+)
+{
+    crt->coverPeek =
+        peek;
+}
+
+
+/*
+ * --------------------------------------------------------------------------
+ * Raster
+ * --------------------------------------------------------------------------
+ */
+
+void CRT_StepCycles(
+    CRT *crt,
+    U32 cycles
+)
+{
+    if ( !crt->scanning )
+        return;
+
+    if ( !crt->memory )
+        return;
+
+
+    /*
+     * Convert CPU cycles into raster pixels.
+     *
+     * Fractional pixels are retained between calls so that
+     * the average raster frequency remains accurate.
+     */
+    crt->pixelAccumulator +=
+        (float)cycles *
+        crt->pixelsPerCycle;
+
+
+    U32 pixels =
+        (U32)crt->pixelAccumulator;
+
+
+    crt->pixelAccumulator -=
+        (float)pixels;
+
+
+    while ( pixels-- )
+    {
+        /*
+         * The electron beam reaches this pixel NOW.
+         *
+         * Sample CPU-visible VRAM at this exact moment.
+         *
+         * This is important:
+         *
+         *     memory[]       = live VRAM
+         *     framebuffer[]  = CRT phosphor
+         */
+        crt->framebuffer[
+            crt->scanPosition
+        ] =
+            crt->memory[
+                crt->scanPosition
+            ];
+
+
+            crt->scanPosition++;
+
+
+            if (
+                crt->scanPosition >=
+                CRT_FRAMEBUFFER_SIZE
+                )
+            {
+                crt->scanPosition =
+                    0;
+            }
+    }
+}
+
+
+/*
+ * --------------------------------------------------------------------------
+ * Rendering
+ * --------------------------------------------------------------------------
+ */
+
+void CRT_Render(
+    CRT *crt
+)
+{
+    if ( !crt )
+        return;
+
+    if ( !crt->renderer )
+        return;
+
+    if ( !crt->memory )
+        return;
+
+
+    SDL_Renderer *renderer =
+        crt->renderer;
+
+
+    SDL_SetRenderDrawBlendMode(
+        renderer,
+        SDL_BLENDMODE_BLEND
+    );
+
+
+    const float radius =
+        crt->radius;
+
+
+    /*
+     * The framebuffer is ALWAYS rectangular.
+     *
+     * The circle is merely a physical/visual cover.
+     */
+    const float screenWidth =
+        radius * 2.0f;
+
+    const float screenHeight =
+        radius * 2.0f;
+
+
+    const float pixelWidth =
+        screenWidth /
+        (float)CRT_WIDTH;
+
+    const float pixelHeight =
+        screenHeight /
+        (float)CRT_HEIGHT;
+
+
+    const float left =
+        crt->x - radius;
+
+    const float top =
+        crt->y - radius;
+
+
+    /*
+     * ----------------------------------------------------------------------
+     * CRT outer glow
+     * ----------------------------------------------------------------------
+     */
+
+    CRT_SetColor(
+        renderer,
+        20,
+        120,
+        50,
+        12
+    );
+
+    SDL_FRect outerGlow =
+    {
+        crt->x - radius - 30.0f,
+        crt->y - radius - 30.0f,
+        radius * 2.0f + 60.0f,
+        radius * 2.0f + 60.0f
+    };
+
+    SDL_RenderFillRect(
+        renderer,
+        &outerGlow
+    );
+
+
+    /*
+     * ----------------------------------------------------------------------
+     * Physical rectangular screen
+     * ----------------------------------------------------------------------
+     */
+
+    CRT_SetColor(
+        renderer,
+        0,
+        5,
+        1,
+        255
+    );
+
+    SDL_FRect screen =
+    {
+        left,
+        top,
+        screenWidth,
+        screenHeight
+    };
+
+    SDL_RenderFillRect(
+        renderer,
+        &screen
+    );
+
+
+    /*
+     * ----------------------------------------------------------------------
+     * Phosphor framebuffer
+     * ----------------------------------------------------------------------
+     *
+     * IMPORTANT:
+     *
+     * Do NOT read crt->memory here.
+     *
+     * The framebuffer represents what the CRT has already scanned.
+     */
+    for ( int y = 0; y < CRT_HEIGHT; y++ )
+    {
+        for ( int x = 0; x < CRT_WIDTH; x++ )
+        {
+            U32 address =
+                (U32)y *
+                CRT_WIDTH +
+                (U32)x;
+
+
+            U8 value =
+                crt->framebuffer[address];
+
+
+            if ( value == 0 )
+                continue;
+
+
+            float px =
+                left +
+                (float)x *
+                pixelWidth;
+
+            float py =
+                top +
+                (float)y *
+                pixelHeight;
+
+
+            U8 green =
+                (U8)(
+                    40 +
+                    (
+                        (U32)value *
+                        215
+                        ) /
+                    255
+                    );
+
+
+            /*
+                * Phosphor bloom.
+                */
+            /*CRT_SetColor(
+                renderer,
+                20,
+                green,
+                35,
+                40
+            );
+
+            SDL_FRect glow =
+            {
+                px - pixelWidth,
+                py - pixelHeight,
+                pixelWidth,
+                pixelHeight
+            };
+
+            SDL_RenderFillRect(
+                renderer,
+                &glow
+            );*/
+
+
+            /*
+             * Actual phosphor pixel.
+             */
+            CRT_SetColor(
+                renderer,
+                20,
+                green,
+                35,
+                255
+            );
+
+            SDL_FRect pixel =
+            {
+                px,
+                py,
+                pixelWidth,
+                pixelHeight
+            };
+
+            SDL_RenderFillRect(
+                renderer,
+                &pixel
+            );
+        }
+    }
+
+
+    /*
+     * ----------------------------------------------------------------------
+     * Scanlines
+     * ----------------------------------------------------------------------
+     */
+
+    CRT_SetColor(
+        renderer,
+        0,
+        50,
+        10,
+        35
+    );
+
+    for ( int row = 0;
+          row < CRT_HEIGHT;
+          row++ )
+    {
+        float y =
+            top +
+            (
+                (float)row +
+                0.5f
+                ) *
+            pixelHeight;
+
+        SDL_RenderLine(
+            renderer,
+            left,
+            y,
+            left + screenWidth,
+            y
+        );
+    }
+
+
+    /*
+     * ----------------------------------------------------------------------
+     * Raster beam
+     * ----------------------------------------------------------------------
+     */
+
+    U32 scanPosition =
+        crt->scanPosition;
+
+
+    int scanX =
+        (int)(
+            scanPosition %
+            CRT_WIDTH
+            );
+
+    int scanY =
+        (int)(
+            scanPosition /
+            CRT_WIDTH
+            );
+
+
+    float beamX =
+        left +
+        (
+            (float)scanX +
+            0.5f
+            ) *
+        pixelWidth;
+
+
+    float beamY =
+        top +
+        (
+            (float)scanY +
+            0.5f
+            ) *
+        pixelHeight;
+
+
+    /*
+     * ----------------------------------------------------------------------
+     * Beam trail
+     * ----------------------------------------------------------------------
+     */
+
+    for (
+        U32 i = 1;
+        i <= CRT_BEAM_TRAIL_LENGTH;
+        i++
+        )
+    {
+        U32 trailPosition =
+            (
+                scanPosition +
+                CRT_FRAMEBUFFER_SIZE -
+                i
+                ) %
+            CRT_FRAMEBUFFER_SIZE;
+
+
+        int trailX =
+            (int)(
+                trailPosition %
+                CRT_WIDTH
+                );
+
+        int trailY =
+            (int)(
+                trailPosition /
+                CRT_WIDTH
+                );
+
+
+        float trailBeamX =
+            left +
+            (
+                (float)trailX +
+                0.5f
+                ) *
+            pixelWidth;
+
+
+        float trailBeamY =
+            top +
+            (
+                (float)trailY +
+                0.5f
+                ) *
+            pixelHeight;
+
+
+        float fade =
+            1.0f -
+            (float)i /
+            (
+                float)(
+                    CRT_BEAM_TRAIL_LENGTH +
+                    1
+                    );
+
+
+        CRT_SetColor(
+            renderer,
+            70,
+            210,
+            120,
+            (U8)(
+                70.0f *
+                fade
+                )
+        );
+
+
+        float trailSize =
+            pixelWidth * 2.0f;
+
+
+        SDL_FRect trail =
+        {
+            trailBeamX -
+                trailSize * 0.5f,
+
+            trailBeamY -
+                trailSize * 0.5f,
+
+            trailSize,
+            trailSize
+        };
+
+
+        SDL_RenderFillRect(
+            renderer,
+            &trail
+        );
+    }
+
+
+    /*
+     * Beam glow.
+     */
+    CRT_DrawGlow(
+        renderer,
+        beamX,
+        beamY,
+        pixelWidth * 2.0f,
+        70,
+        210,
+        120
+    );
+
+
+    /*
+     * Actual beam.
+     */
+    CRT_SetColor(
+        renderer,
+        220,
+        255,
+        220,
+        255
+    );
+
+
+    float beamSize =
+        pixelWidth * 2.0f;
+
+
+    SDL_FRect beam =
+    {
+        beamX -
+            beamSize * 0.5f,
+
+        beamY -
+            beamSize * 0.5f,
+
+        beamSize,
+        beamSize
+    };
+
+
+    SDL_RenderFillRect(
+        renderer,
+        &beam
+    );
+
+
+    /*
+     * ----------------------------------------------------------------------
+     * Circular physical cover
+     * ----------------------------------------------------------------------
+     *
+     * This is intentionally AFTER the framebuffer.
+     *
+     * The framebuffer remains a complete 128x128 rectangle.
+     *
+     * The cover simply sits in front of it.
+     */
+    if ( crt->coverEnabled )
+    {
+        CRT_DrawCoverMask(
+            crt
+        );
+
+        CRT_DrawCoverGlass(
+            crt
+        );
+    }
+
+
+    /*
+     * ----------------------------------------------------------------------
+     * Outer CRT bezel
+     * ----------------------------------------------------------------------
+     */
+
+    /*
+     * Outer shadow.
+     */
+    CRT_SetColor(
+        renderer,
+        0,
+        0,
+        0,
+        100
+    );
+
+    CRT_DrawCircle(
+        renderer,
+        crt->x,
+        crt->y,
+        radius + 7.0f
+    );
+
+
+    /*
+     * Main bezel.
+     */
+    CRT_SetColor(
+        renderer,
+        20,
+        45,
+        28,
+        180
+    );
+
+    CRT_DrawCircle(
+        renderer,
+        crt->x,
+        crt->y,
+        radius + 4.0f
+    );
+
+
+    /*
+     * Bright bezel edge.
+     */
+    CRT_SetColor(
+        renderer,
+        70,
+        110,
+        78,
+        100
+    );
+
+    CRT_DrawCircle(
+        renderer,
+        crt->x,
+        crt->y,
+        radius + 2.0f
+    );
+
+
+    /*
+     * Inner dark bezel edge.
+     */
+    CRT_SetColor(
+        renderer,
+        0,
+        10,
+        4,
+        220
+    );
+
+    CRT_DrawCircle(
+        renderer,
+        crt->x,
+        crt->y,
+        radius
+    );
+
 
     SDL_SetRenderDrawBlendMode(
         renderer,

@@ -30,9 +30,6 @@ typedef struct CRT
 
     const U8 *memory;
 
-    /*
-     * Actual visible CRT phosphor.
-     */
     U8 framebuffer[CRT_FRAMEBUFFER_SIZE];
 
     U32 scanPosition;
@@ -41,6 +38,18 @@ typedef struct CRT
     float pixelsPerCycle;
 
     bool scanning;
+
+    /*
+     * Physical CRT cover.
+     */
+    bool coverEnabled;
+    bool coverPeek;
+
+    /*
+     * Cover appearance.
+     */
+    float coverDepth;
+    float coverHighlight;
 
 } CRT;
 
@@ -68,5 +77,13 @@ void CRT_StepCycles(
 void CRT_Render(
     CRT *crt
 );
+void CRT_SetCover(
+    CRT *crt,
+    bool enabled
+);
 
+void CRT_SetCoverPeek(
+    CRT *crt,
+    bool peek
+);
 #endif
