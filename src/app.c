@@ -73,6 +73,6 @@ void APP_Run( APP *app )
             &app->memory
         );
 
-        SDL_Delay( 16 );
+        SDL_Delay( 8 );
     }
 }

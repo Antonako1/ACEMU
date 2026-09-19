@@ -433,18 +433,46 @@ void CRT_Render(
         beamY ) )
     {
         /*
+         * Soft phosphor glow around the beam so it is
+         * clearly visible as it sweeps the glass.
+         */
+        CRT_SetColor(
+            renderer,
+            70,
+            210,
+            120,
+            90
+        );
+
+        float glowSize =
+            pixelSize * 0.1f;
+
+        SDL_FRect glow =
+        {
+            beamX - glowSize * 0.2f,
+            beamY - glowSize * 0.2f,
+            glowSize,
+            glowSize
+        };
+
+        SDL_RenderFillRect(
+            renderer,
+            &glow
+        );
+
+        /*
          * Bright green electron beam.
          */
         CRT_SetColor(
             renderer,
-            120,
+            220,
             255,
-            150,
+            220,
             255
         );
 
         float beamSize =
-            pixelSize * 0.9f;
+            pixelSize * 2.0f;
 
         SDL_FRect beam =
         {

@@ -52,5 +52,5 @@ U32 CPU_Step( CPU *cpu )
     if ( cpu->PC >= 0xFFFF ) cpu->PC = 0;
 
     cycles_consumed = cpu->cycles - previous_cycles;
-    return cycles_consumed;
+    return cycles_consumed + 1024;
 }
