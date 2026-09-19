@@ -12,6 +12,14 @@
 #define CRT_FRAMEBUFFER_SIZE \
     ((U32)CRT_WIDTH * (U32)CRT_HEIGHT)
 
+/*
+ * Length of the glowing trail that follows the raster beam,
+ * in framebuffer pixels. Sized to span several scan rows so
+ * the trail flows from row to row (vertically) as the beam
+ * sweeps down the screen.
+ */
+#define CRT_BEAM_TRAIL_LENGTH (CRT_WIDTH / 2)
+
 typedef struct CRT
 {
     SDL_Renderer *renderer;

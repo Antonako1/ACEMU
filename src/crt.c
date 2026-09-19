@@ -38,6 +38,51 @@ static bool CRT_InCircle(
         (crt->radius * crt->radius);
 }
 
+static void CRT_DrawGlow(
+    SDL_Renderer *renderer,
+    float cx,
+    float cy,
+    float radius,
+    U8 r,
+    U8 g,
+    U8 b
+)
+{
+    /*
+     * Soft radial bloom from concentric translucent squares,
+     * brightest toward the centre.
+     */
+    for ( int i = 0; i < 4; i++ )
+    {
+        float t =
+            (float)(i + 1) / 4.0f;
+
+        float size =
+            radius * 2.0f * t;
+
+        CRT_SetColor(
+            renderer,
+            r,
+            g,
+            b,
+            (U8)(90.0f * (1.0f - t) + 10.0f)
+        );
+
+        SDL_FRect rect =
+        {
+            cx - size * 0.5f,
+            cy - size * 0.5f,
+            size,
+            size
+        };
+
+        SDL_RenderFillRect(
+            renderer,
+            &rect
+        );
+    }
+}
+
 
 void CRT_Init(
     CRT *crt,
@@ -310,6 +355,31 @@ void CRT_Render(
                     ((U32)value * 215) / 255
                     );
 
+            /*
+             * Phosphor bloom: a soft halo behind the lit
+             * pixel so allocated phosphors glow.
+             */
+            CRT_SetColor(
+                renderer,
+                20,
+                green,
+                35,
+                45
+            );
+
+            SDL_FRect glow =
+            {
+                px - pixelSize,
+                py - pixelSize,
+                pixelSize * 3.0f,
+                pixelSize * 3.0f
+            };
+
+            SDL_RenderFillRect(
+                renderer,
+                &glow
+            );
+
             CRT_SetColor(
                 renderer,
                 20,
@@ -433,31 +503,75 @@ void CRT_Render(
         beamY ) )
     {
         /*
-         * Soft phosphor glow around the beam so it is
+         * Glowing trail following the beam: the last
+         * CRT_BEAM_TRAIL_LENGTH scan positions, fading with
+         * distance from the beam head.
+         */
+        for ( U32 i = 1; i <= CRT_BEAM_TRAIL_LENGTH; i++ )
+        {
+            U32 trailPos =
+                (scanPosition + CRT_FRAMEBUFFER_SIZE - i) %
+                CRT_FRAMEBUFFER_SIZE;
+
+            int trailX =
+                (int)(trailPos % CRT_WIDTH);
+
+            int trailY =
+                (int)(trailPos / CRT_WIDTH);
+
+            float trailBeamX =
+                left +
+                ((float)trailX + 0.5f) * pixelSize;
+
+            float trailBeamY =
+                top +
+                ((float)trailY + 0.5f) * pixelSize;
+
+            if ( !CRT_InCircle( crt, trailBeamX, trailBeamY ) )
+                continue;
+
+            float fade =
+                1.0f -
+                (float)i /
+                (float)(CRT_BEAM_TRAIL_LENGTH + 1);
+
+            CRT_SetColor(
+                renderer,
+                70,
+                210,
+                120,
+                (U8)(70.0f * fade)
+            );
+
+            float trailSize =
+                pixelSize * 2.0f;
+
+            SDL_FRect trail =
+            {
+                trailBeamX - trailSize * 0.5f,
+                trailBeamY - trailSize * 0.5f,
+                trailSize,
+                trailSize
+            };
+
+            SDL_RenderFillRect(
+                renderer,
+                &trail
+            );
+        }
+
+        /*
+         * Soft phosphor glow behind the beam so it is
          * clearly visible as it sweeps the glass.
          */
-        CRT_SetColor(
+        CRT_DrawGlow(
             renderer,
+            beamX,
+            beamY,
+            pixelSize * 2.0f,
             70,
             210,
-            120,
-            90
-        );
-
-        float glowSize =
-            pixelSize * 0.1f;
-
-        SDL_FRect glow =
-        {
-            beamX - glowSize * 0.2f,
-            beamY - glowSize * 0.2f,
-            glowSize,
-            glowSize
-        };
-
-        SDL_RenderFillRect(
-            renderer,
-            &glow
+            120
         );
 
         /*
